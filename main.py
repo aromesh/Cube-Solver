@@ -2,46 +2,53 @@ import numpy as np
 import math
 import cv2
 
-AREA_LIMIT = 600
+from face import Face
 
 # in RGB 
 color_map = {
     'r': ([255, 0, 0]),
-    'b': ([0, 0, 255])
+    'o': ([255, 165, 0]),
+    'b': ([0, 0, 255]),
+    'g': ([0, 255, 0]),
+    'y': ([255, 255, 0]),
+    'w': ([255, 255, 255])
 }
 
 # in openCV HSV
 color_boundaries = {
-    'red': ([0, 100, 100], [10, 255, 255]),
-    'red2': ([155, 100, 100], [179, 255, 255]),
+    'red': ([0, 75, 75], [10, 255, 255]),
+    'red2': ([155, 75, 75], [179, 255, 255]),
     'blue': ([93, 140, 160], [135, 255, 255]),
-    #'orange': ([11, 110, 125], [27, 255, 255]) 
+    'green': ([43, 75, 75], [85, 255, 255]),
+    #'orange': ([11, 80, 100], [27, 255, 255]),
 }
 
-capture = cv2.VideoCapture(0)
-
-if not (capture.isOpened()):
-    print("Could not open camera")
-
-def draw_cube_rep(frame, cubie_face):
+def draw_cube_rep(frame, face_list):
 
     d = 50
     start_pos = np.array([100,100])
-    pos_1 = start_pos + np.array([-3*d/2, -3*d/2])
-    pos_2 = start_pos + np.array([-1*d/2, -1*d/2])
-    new_color = cubie_face.face_color()
-    cv2.rectangle(frame, pos_1.astype(int), pos_2.astype(int), new_color, -1)
+    for i in range(len(face_list)):
+        x = i % 3
+        y = math.floor(i/3)
+        point_0 = np.array([x, y])*d + 100
+        point_1 = np.array([x+1, y+1])*d + 100
 
-class Face(object):
-    def __init__(self, color_name, x, y):
-        self.color = color_name
-        self.x = x
-        self.y = y
+        face_color = RGB_to_BGR(face_list[i].get_face_color())
 
-    def face_color(self):
+        cv2.rectangle(frame, point_0, point_1, face_color, -1)
+        cv2.rectangle(frame, point_0, point_1, (0,0,0), 3)
+        text = str(face_list[i].id)
+        
+        midpoint = ((point_0 + point_1)/2).astype(np.int64)
+        cv2.putText(frame, text, midpoint, cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255,255,255), 2)
 
-        return color_map[self.color]
 
+def RGB_to_BGR(color):
+    r = color[0]
+    g = color[1]
+    b = color[2]
+
+    return (b,g,r)
 
 def sort_contours(cnts, method="left-to-right"):
     # initialize the reverse flag and sort index
@@ -66,10 +73,9 @@ def sort_contours(cnts, method="left-to-right"):
     # return the list of sorted contours and bounding boxes
     return cnts, boundingBoxes
 
-def drawContour(contour, image, contour_color):
+def drawContour(contour, image):
 
     # Draw rectangular contour with the minimum area
-
 
     ## Contour Approximation
     # epsilon = 0.1*cv2.arcLength(contour,True)
@@ -81,6 +87,8 @@ def drawContour(contour, image, contour_color):
 
     # Regular contours
     # cv2.drawContours(frame, [contour], 0, (255, 255, 0), 2)
+
+    # Min area rectangle contour
 
     rect = cv2.minAreaRect(contour)
     box = cv2.boxPoints(rect)
@@ -103,15 +111,44 @@ def hsvConverter(color):
 
     return np.array([h_new, s_new, v_new], np.uint8)
 
+def contour_sort(face_list):
 
-#morphological transformations
+    # Function to sort contours from top-to-bottom and left-to-right
+
+    # sorting criteria
+    sort_y = lambda elem: elem.y
+    sort_x = lambda elem: elem.x
+
+    # Sort by y value
+    face_list.sort(key=sort_y)
+    
+    sorted_face_list = []
+    for i in range(len(face_list)):
+        
+        # Sort each row by x-value
+        if (i % 3 == 0):
+            row_list = face_list[i:i+3]
+            row_list.sort(key=sort_x)
+            sorted_face_list[i:i+3] = row_list
+
+    # Re-assign id
+    for j in range(len(sorted_face_list)):
+        sorted_face_list[j].id = j+1
+
+    return sorted_face_list
+
+
+### Start script
+capture = cv2.VideoCapture(0)
+
+if not (capture.isOpened()):
+    print("Could not open camera")
+
+AREA_LIMIT = 600
+
+# Kernel for morphological transforms
 kernel_1 = np.ones((5,5),np.uint8)
 kernel_2 = np.ones((3,3),np.uint8)
-
-
-# take second element for sort
-def take_x(elem):
-    return elem.x
 
 while(True):
     ret, frame = capture.read()
@@ -121,7 +158,6 @@ while(True):
     hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
     # Draw Contours
-    out_number = 0
     face_list = []
     for color_name, (lower, upper) in color_boundaries.items():
         
@@ -135,58 +171,40 @@ while(True):
         gradient = cv2.morphologyEx(opening, cv2.MORPH_GRADIENT, kernel_2)    
 
         contours, hierarchy = cv2.findContours(gradient,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
-        #print(len(contours))
 
-        if (len(contours) > 0):
-            #sort contours top to bottom
-            (contours,_) = sort_contours(contours, method="left-to-right")
-        
-        #print(len(contours))
-
-        cube_rows = []
-        row = []
-        for (i, c) in enumerate(contours, start=1):
-            row.append(c)
-            if i % 3 == 0:
-                (contours,_) = sort_contours(contours, method="top-to-bottom")
-                cube_rows.append(contours)
-                row = []
-
-
-        # Loop through contours based on area an draw them
-        number = 0
+        # Loop through contours based on area and draw them
+        contour_id = 0
         for contour in contours:
             contour_area = cv2.contourArea(contour)
             if (contour_area > AREA_LIMIT):
 
+                # Find centre of contour
                 M = cv2.moments(contour)
                 cx = int(M['m10']/M['m00'])
                 cy = int(M['m01']/M['m00'])
 
-                contour_color = np.mean(np.array([color_lower, color_upper]))
-                drawContour(contour, frame, contour_color)
+                drawContour(contour, frame)
                 cv2.circle(frame,(cx,cy), 2, (0,255,0), -1)
-                number+=1
-                text = str(number)
-                #if (len(contours) == 9): 
-                cv2.putText(frame, text, (cx,cy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
-                out_number += 1
-                face_instance = Face(color_name[0], cx, cy)
+
+                contour_id += 1
+                face_instance = Face(color_name[0], cx, cy, color_map, contour_id)
                 face_list.append(face_instance)
 
+    # sort contours
+    face_list = contour_sort(face_list)
 
-    print(len(face_list))
+    # Draw ID on actual cube
+    for i in range(len(face_list)):
+        
+        text = str(face_list[i].id)
+        face = face_list[i]
+        cv2.putText(frame, text, (face.x,face.y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,0), 2)
 
-    # sort stuff
-    face_list.sort(key=take_x)
-
-    # loop for drawing faces in window
-    for i in range(len(face_list)-1):
-        draw_cube_rep(frame, face_list[i])
+    # Draw captured cube in window
+    draw_cube_rep(frame, face_list)
     
-
+    # reset face list
     face_list.clear()
-    out_number = 0
 
     cv2.imshow("Main Window", frame)
     cv2.imshow("Opening", opening)
