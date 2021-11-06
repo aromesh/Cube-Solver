@@ -1,5 +1,5 @@
 
-class Face:
+class Cubie:
     def __init__(self, color_name, x, y, color_map, id):
         self.color_name = color_name
         self.x = x
@@ -13,3 +13,10 @@ class Face:
         return self.color_map[self.color_name]
 
     
+class Face:
+    def __init__(self):
+        self.cubies = []
+        self.build()
+
+    def build(self, cubie):
+        self.cubies.append(cubie)

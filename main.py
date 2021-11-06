@@ -1,8 +1,12 @@
 import numpy as np
 import math
 import cv2
+import keyboard
 
-from face import Face
+import color_functions
+import file_writer
+
+from face import Cubie
 
 # in RGB 
 color_map = {
@@ -16,10 +20,10 @@ color_map = {
 
 # in openCV HSV
 color_boundaries = {
-    'red': ([0, 75, 75], [10, 255, 255]),
-    'red2': ([155, 75, 75], [179, 255, 255]),
+    #'red': ([0, 75, 75], [10, 255, 255]),
+    #'red2': ([155, 75, 75], [179, 255, 255]),
     'blue': ([93, 140, 160], [135, 255, 255]),
-    'green': ([43, 75, 75], [85, 255, 255]),
+    #'green': ([43, 75, 75], [85, 255, 255]),
     #'orange': ([11, 80, 100], [27, 255, 255]),
 }
 
@@ -33,7 +37,7 @@ def draw_cube_rep(frame, face_list):
         point_0 = np.array([x, y])*d + 100
         point_1 = np.array([x+1, y+1])*d + 100
 
-        face_color = RGB_to_BGR(face_list[i].get_face_color())
+        face_color = color_functions.RGB_to_BGR(face_list[i].get_face_color())
 
         cv2.rectangle(frame, point_0, point_1, face_color, -1)
         cv2.rectangle(frame, point_0, point_1, (0,0,0), 3)
@@ -43,12 +47,6 @@ def draw_cube_rep(frame, face_list):
         cv2.putText(frame, text, midpoint, cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255,255,255), 2)
 
 
-def RGB_to_BGR(color):
-    r = color[0]
-    g = color[1]
-    b = color[2]
-
-    return (b,g,r)
 
 def sort_contours(cnts, method="left-to-right"):
     # initialize the reverse flag and sort index
@@ -96,21 +94,6 @@ def drawContour(contour, image):
     
     cv2.drawContours(image,[box],0,(255,0,0),3)
 
-
-def hsvConverter(color):
-
-    # Function to convert regular HSV values to openCV HSV values
-
-    h = color[0]
-    s = color[1]
-    v = color[2]
-
-    h_new = round(h/2)
-    s_new = round(s/100*255)
-    v_new = round(v/100*255)
-
-    return np.array([h_new, s_new, v_new], np.uint8)
-
 def contour_sort(face_list):
 
     # Function to sort contours from top-to-bottom and left-to-right
@@ -138,17 +121,145 @@ def contour_sort(face_list):
     return sorted_face_list
 
 
+AREA_LIMIT = 700
+calibrated_bool = False
+
+color_dict = {
+    'r': ([255, 0, 0]),
+    'g': ([0, 255, 0]),
+    'b': ([0, 0, 255]),
+    'y': ([255, 255, 0]),
+    'o': ([255, 165, 0]),
+    'w': ([255, 255, 255])
+}
+
+new_color_dict = {
+    'r': ([255, 0, 0]),
+    'g': ([0, 255, 0]),
+    'b': ([1, 0, 255]),
+    'y': ([255, 255, 0]),
+    'o': ([255, 165, 0]),
+    'w': ([255, 255, 255])
+}
+
+
+color_change = {
+    'r': 0,
+    'g': 0,
+    'b': 0,
+    'y': 0,
+    'o': 0,
+    'w': 0
+}
+
+def read_color():
+    key = keyboard.read_key()
+    if (key in color_dict.keys()):
+        # Change dictionary value and write to csv file
+        color_dict[key] = mean_val
+        file_writer.writefile('test_file.csv', color_dict)
+
+
+def keypress_detect(color_val, color_list):
+
+    for key in color_list.keys():
+        # if pressed key in list update accordingly
+        if (keyboard.is_pressed(key)):
+            #update both color list and color list hsv
+            color_list[key] = color_val
+            color_change[key] = 1
+
+    #return color_dict
+
+def is_calibrated(color_change_map, filename, modified_color_list):
+
+    value_count = 0
+    for value in color_change_map.values():
+        if (value == 1):
+            value_count += 1
+
+    if (keyboard.is_pressed('space') and value_count == 6):
+        file_writer.writefile(filename, modified_color_list)
+        return True
+
+def draw_color_map(frame, color_list, color_change):
+
+    # draws rectangles for each color that was assigned to color_dict
+    face_side = 70
+    offset = 5
+    p0_base = np.array([20, 20]) #- int(face_side/2)
+    p1_base = p0_base + int(face_side/2)
+
+    count = 1
+    for key, value in color_list.items():
+        if (color_change[key] == 0):
+            # if not calibrated - grey color
+            rect_color = (150,150,150)
+        else:
+            rect_color = value
+
+        p0 = p0_base + np.array([0, int(count*(face_side/2+offset))])
+        p1 = p1_base + np.array([0, int(count*(face_side/2+offset))])
+
+        cv2.rectangle(frame, p0, p1, (int(rect_color[0]),int(rect_color[1]),int(rect_color[2])), thickness=-1)
+        cv2.rectangle(frame, p0, p1, (0,0,0), thickness=1)
+        text = key
+        cv2.putText(frame, text, (p0[0]+10,p0[1]+15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,0), 1)
+        # count to adjust location of color square
+        count += 1
+
+
 ### Start script
+CSV_FILE = 'test_file.csv'
 capture = cv2.VideoCapture(0)
 
 if not (capture.isOpened()):
     print("Could not open camera")
 
-AREA_LIMIT = 600
+# Calibration to get color
+while not (calibrated_bool):
+
+    ret, frame = capture.read()
+    frame = cv2.flip(frame, 1)
+
+    # get video capture properties
+    width  = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)/2)
+    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)/2)
+
+    face_side = 50
+    point_0 = np.array([width, height]) - int(face_side/2)
+    point_1 = np.array([width, height]) + int(face_side/2)
+
+    cv2.rectangle(frame, point_0, point_1, (255,255,255),3)
+
+    rect = frame[point_0[1]:point_1[1], point_0[0]:point_1[0]]
+
+    # mean returns only single value
+    mean_val = np.array(cv2.mean(rect)[0:3], dtype=np.uint8)
+   
+    # change new_color_dict after keypress (store an hsv value)
+    keypress_detect(mean_val, new_color_dict)
+    
+    #draw color map using rgb dict
+    draw_color_map(frame, new_color_dict, color_change)
+
+    # save rgb color dict
+    calibrated_bool = is_calibrated(color_change, CSV_FILE, new_color_dict)
+
+    if cv2.waitKey(1) == 27:
+        break
+
+    #cv2.imshow("rectangle", rect)
+    cv2.imshow("Main Window", frame)
+
+# cv2.destroyAllWindows()
+# capture.release()
 
 # Kernel for morphological transforms
 kernel_1 = np.ones((5,5),np.uint8)
 kernel_2 = np.ones((3,3),np.uint8)
+
+
 
 while(True):
     ret, frame = capture.read()
@@ -187,7 +298,7 @@ while(True):
                 cv2.circle(frame,(cx,cy), 2, (0,255,0), -1)
 
                 contour_id += 1
-                face_instance = Face(color_name[0], cx, cy, color_map, contour_id)
+                face_instance = Cubie(color_name[0], cx, cy, color_map, contour_id)
                 face_list.append(face_instance)
 
     # sort contours
